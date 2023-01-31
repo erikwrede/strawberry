@@ -163,6 +163,7 @@ def execute_sync(
         execution_context=execution_context,
         extensions=list(extensions),
     )
+    compiler = execution_context.schema.compiler
 
     with extensions_runner.request():
         # Note: In graphql-core the schema would be validated here but in
@@ -173,9 +174,11 @@ def execute_sync(
         with extensions_runner.parsing():
             try:
                 if not execution_context.graphql_document:
-                    execution_context.graphql_document = parse_document(
-                        execution_context.query
-                    )
+                    compiler_file_id = compiler.add_executable(execution_context.query)
+                    #execution_context.graphql_document = parse_document(
+                    #    execution_context.query
+                    #)
+                    execution_context.graphql_document = compiler.gql_core_ast(compiler_file_id)
 
             except GraphQLError as error:
                 execution_context.errors = [error]
@@ -201,7 +204,8 @@ def execute_sync(
             raise InvalidOperationTypeError(execution_context.operation_type)
 
         with extensions_runner.validation():
-            _run_validation(execution_context)
+            #_run_validation(execution_context)
+            compiler.validate_file(compiler_file_id)
             if execution_context.errors:
                 process_errors(execution_context.errors, execution_context)
                 return ExecutionResult(data=None, errors=execution_context.errors)

@@ -12,6 +12,7 @@ from graphql import (
 )
 from graphql.subscription import subscribe
 from graphql.type.directives import specified_directives
+from rustberry import QueryCompiler
 
 from strawberry.annotation import StrawberryAnnotation
 from strawberry.custom_scalar import ScalarDefinition, ScalarWrapper
@@ -148,6 +149,12 @@ class Schema(BaseSchema):
         if errors:
             formatted_errors = "\n\n".join(f"❌ {error.message}" for error in errors)
             raise ValueError(f"Invalid Schema. Errors:\n\n{formatted_errors}")
+
+        print("Schema created")
+        self.compiler = QueryCompiler()
+        self.compiler.set_schema(self.as_str())
+        validation_result = self.compiler.validate()
+        print("Validation result: ", validation_result)
 
     def get_extensions(
         self, sync: bool = False
