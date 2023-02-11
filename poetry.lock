@@ -3078,7 +3078,7 @@ rich = [
     {file = "rich-12.6.0.tar.gz", hash = "sha256:ba3a3775974105c221d31141f2c116f4fd65c5ceb0698657a11e9f295ec93fd0"},
 ]
 rustberry = [
-    {file = "rustberry-0.6.4-cp310-cp310-macosx_10_7_x86_64.whl", hash = "sha256:765490590d9e534a5dc49b95467a07c3139942cfc4b41e166cedb00fd76a4f8e"},
+    {file = "rustberry-0.6.4-cp310-cp310-macosx_10_7_x86_64.whl", hash = "sha256:4159b3cc0e1c4adde6ccfdd9280cf69449138299cad88e211632a9e19621cd48"},
 ]
 sanic = [
     {file = "sanic-22.12.0-py3-none-any.whl", hash = "sha256:84edf46cc17d13264ccec0ae6622e43087498f95644dc336ade74a2d5e6c88cb"},
