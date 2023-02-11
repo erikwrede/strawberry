@@ -1386,7 +1386,7 @@ jupyter = ["ipywidgets (>=7.5.1,<8.0.0)"]
 
 [[package]]
 name = "rustberry"
-version = "0.6.1"
+version = "0.6.4"
 description = ""
 category = "main"
 optional = false
@@ -1394,7 +1394,7 @@ python-versions = ">=3.7"
 
 [package.source]
 type = "file"
-url = "rustberry-0.6.1-cp310-cp310-macosx_10_7_x86_64.whl"
+url = "rustberry-0.6.4-cp310-cp310-macosx_10_7_x86_64.whl"
 
 [[package]]
 name = "sanic"
@@ -1867,7 +1867,7 @@ sanic = ["sanic"]
 [metadata]
 lock-version = "1.1"
 python-versions = "^3.7"
-content-hash = "2a3819c5d8d57e43d22f8f44f19eeda2ab1e7d42520c19fad0a15b61c69975c6"
+content-hash = "5dd6443e2571c77cfd4dcf97efef539215b3a9248095761155f94bd1c16c724c"
 
 [metadata.files]
 aiofiles = [
@@ -3078,7 +3078,7 @@ rich = [
     {file = "rich-12.6.0.tar.gz", hash = "sha256:ba3a3775974105c221d31141f2c116f4fd65c5ceb0698657a11e9f295ec93fd0"},
 ]
 rustberry = [
-    {file = "rustberry-0.6.1-cp310-cp310-macosx_10_7_x86_64.whl", hash = "sha256:f7199b39f2784747c00393f7faf884a6a5b34a4cdd24f6cf5c027dd3050ad7ad"},
+    {file = "rustberry-0.6.4-cp310-cp310-macosx_10_7_x86_64.whl", hash = "sha256:765490590d9e534a5dc49b95467a07c3139942cfc4b41e166cedb00fd76a4f8e"},
 ]
 sanic = [
     {file = "sanic-22.12.0-py3-none-any.whl", hash = "sha256:84edf46cc17d13264ccec0ae6622e43087498f95644dc336ade74a2d5e6c88cb"},

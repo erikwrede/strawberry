@@ -178,7 +178,7 @@ def execute_sync(
                     #execution_context.graphql_document = parse_document(
                     #    execution_context.query
                     #)
-                    execution_context.graphql_document = compiler.gql_core_ast(compiler_file_id)
+                    execution_context.graphql_document = compiler.gql_core_mirror(compiler_file_id)
 
             except GraphQLError as error:
                 execution_context.errors = [error]
