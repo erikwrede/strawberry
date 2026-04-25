@@ -26,6 +26,64 @@ if TYPE_CHECKING:
     from .graphql import OperationType
 
 
+@runtime_checkable
+class Executor(Protocol):
+    """Pluggable parse + validate seam for a :class:`~strawberry.Schema`.
+
+    Implementations MUST produce a graphql-core :class:`DocumentNode` (the
+    same type returned by :func:`graphql.parse`); the document is consumed
+    by graphql-core's executor downstream. :class:`GraphQLError` instances
+    returned from :meth:`validate` MUST carry source ``locations`` so
+    Strawberry's error formatter can surface them to clients.
+
+    The executor is constructed once per :class:`~strawberry.Schema` and is
+    shared across requests; it MUST be safe for concurrent use from multiple
+    coroutines (graphql-core's :func:`parse` and :func:`validate` are pure /
+    re-entrant; alternative implementations should mirror that contract).
+
+    Implementations MUST NOT mutate the
+    :class:`~strawberry.types.ExecutionContext` — that is the caller's job.
+    """
+
+    def __init__(self, schema: Schema) -> None:
+        """Build an executor bound to ``schema``.
+
+        Heavy, schema-derived state (e.g. a compiled validator) should be
+        constructed here so it can be reused across requests.
+        """
+        ...
+
+    def parse(
+        self,
+        query: str,
+        *,
+        parse_options: ParseOptions,
+    ) -> DocumentNode:
+        """Parse ``query`` to a graphql-core ``DocumentNode``.
+
+        Raises :class:`GraphQLError` (typically
+        :class:`~graphql.error.GraphQLSyntaxError`) on failure.
+        """
+        ...
+
+    def validate(
+        self,
+        document: DocumentNode,
+        *,
+        validation_rules: tuple[type[ASTValidationRule], ...],
+    ) -> list[GraphQLError]:
+        """Run validation against ``document``.
+
+        Returns an empty list on success.
+
+        ``validation_rules`` is the *complete* tuple of rules to run,
+        including any Strawberry-specific rules (``MaybeNullValidationRule``,
+        ``OneOfInputValidationRule``) — they are appended by the caller, not
+        the executor.
+        """
+        ...
+
+
 @dataclasses.dataclass
 class ExecutionContext:
     query: str | None
@@ -127,6 +185,7 @@ class SubscriptionExecutionResult(Protocol):
 __all__ = [
     "ExecutionContext",
     "ExecutionResult",
+    "Executor",
     "ParseOptions",
     "SubscriptionExecutionResult",
 ]
