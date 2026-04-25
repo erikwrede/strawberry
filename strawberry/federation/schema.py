@@ -38,6 +38,7 @@ if TYPE_CHECKING:
     from strawberry.schema.config import StrawberryConfig
     from strawberry.schema_directive import StrawberrySchemaDirective
     from strawberry.types.enum import StrawberryEnumDefinition
+    from strawberry.types.execution import Executor
 
 
 FederationAny = NewType("FederationAny", object)
@@ -73,6 +74,7 @@ class Schema(BaseSchema):
             "2.10",
             "2.11",
         ] = "2.11",
+        executor_class: Optional[type["Executor"]] = None,
     ) -> None:
         # Convert version string (e.g., "2.5") to version tuple (e.g., (2, 5))
         self.federation_version = parse_version(federation_version)
@@ -108,6 +110,7 @@ class Schema(BaseSchema):
             config=config,
             scalar_overrides=federation_scalar_overrides,
             schema_directives=schema_directives,
+            executor_class=executor_class,
         )
 
         self.schema_directives = list(schema_directives)
