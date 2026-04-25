@@ -10,7 +10,7 @@ from strawberry.extensions import AddValidationRules, DisableValidation
 
 
 @pytest.mark.parametrize("validate_queries", [True, False])
-@patch("strawberry.schema.schema.validate", wraps=validate)
+@patch("strawberry.schema.executors.gql_validate", wraps=validate)
 def test_enabling_query_validation_sync(mock_validate, validate_queries):
     @strawberry.type
     class Query:
@@ -63,7 +63,7 @@ async def test_enabling_query_validation(validate_queries):
         }
     """
 
-    with patch("strawberry.schema.schema.validate", wraps=validate) as mock_validate:
+    with patch("strawberry.schema.executors.gql_validate", wraps=validate) as mock_validate:
         result = await schema.execute(
             query,
             root_value=Query(),

@@ -29,12 +29,10 @@ from graphql import (
     GraphQLSchema,
     OperationDefinitionNode,
     get_introspection_query,
-    parse,
     validate_schema,
 )
 from graphql.execution.middleware import MiddlewareManager
 from graphql.type.directives import specified_directives
-from graphql.validation import validate
 
 from strawberry import relay
 from strawberry.annotation import StrawberryAnnotation
@@ -47,6 +45,7 @@ from strawberry.extensions.directives import (
 )
 from strawberry.extensions.runner import SchemaExtensionsRunner
 from strawberry.printer import print_schema
+from strawberry.schema.executors import GraphQlCoreExecutor
 from strawberry.schema.schema_converter import GraphQLCoreConverter
 from strawberry.schema.validation_rules.maybe_null import MaybeNullValidationRule
 from strawberry.schema.validation_rules.one_of import OneOfInputValidationRule
@@ -57,6 +56,7 @@ from strawberry.types.base import (
 )
 from strawberry.types.execution import (
     ExecutionContext,
+    Executor,
     ExecutionResult,
     PreExecutionError,
 )
@@ -120,15 +120,26 @@ def validate_document(
     document: DocumentNode,
     validation_rules: tuple[type[ASTValidationRule], ...],
 ) -> list[GraphQLError]:
+    """Validate ``document`` against ``schema``.
+
+    Strawberry-specific rules (``MaybeNullValidationRule``,
+    ``OneOfInputValidationRule``) are appended to ``validation_rules`` here
+    so that any path reaching this helper, including
+    :class:`~strawberry.extensions.ValidationCache`, sees the same merged
+    tuple. Validation itself is delegated to the
+    :class:`~strawberry.types.execution.Executor` configured on the
+    Strawberry schema; the default executor calls graphql-core's
+    :func:`validate`, preserving the pre-seam behaviour byte-for-byte.
+    """
     validation_rules = (
         *validation_rules,
         MaybeNullValidationRule,
         OneOfInputValidationRule,
     )
-    return validate(
-        schema,
+    strawberry_schema: Schema = schema._strawberry_schema  # type: ignore[attr-defined]
+    return strawberry_schema.executor.validate(
         document,
-        validation_rules,
+        validation_rules=validation_rules,
     )
 
 
@@ -220,6 +231,7 @@ class Schema(BaseSchema):
             Mapping[object, type | ScalarWrapper | ScalarDefinition] | None
         ) = None,
         schema_directives: Iterable[object] = (),
+        executor_class: type[Executor] | None = None,
     ) -> None:
         """Default Schema to be used in a Strawberry application.
 
@@ -242,6 +254,13 @@ class Schema(BaseSchema):
             config: The configuration for the schema.
             scalar_overrides: A dictionary of overrides for scalars.
             schema_directives: A list of schema directives for the schema.
+            executor_class: Optional pluggable
+                :class:`~strawberry.types.execution.Executor` implementation
+                used for the parse and validate phases. Defaults to
+                :class:`~strawberry.schema.GraphQlCoreExecutor`, which
+                delegates to graphql-core. A third-party (e.g. Rust-backed)
+                executor can be plugged in here without affecting the
+                ``Schema`` public API.
 
         Example:
         ```python
@@ -366,6 +385,12 @@ class Schema(BaseSchema):
         if errors:
             formatted_errors = "\n\n".join(f"❌ {error.message}" for error in errors)
             raise ValueError(f"Invalid Schema. Errors:\n\n{formatted_errors}")
+
+        # Instantiate the parse/validate executor *after* schema validation
+        # has succeeded so executor implementations that derive heavy state
+        # from the schema (e.g. a Rust-backed compiler that consumes the
+        # SDL) only run on a known-good schema.
+        self.executor: Executor = (executor_class or GraphQlCoreExecutor)(self)
 
     def get_extensions(self, sync: bool = False) -> list[SchemaExtension]:
         extensions: list[type[SchemaExtension] | SchemaExtension] = []
@@ -494,7 +519,10 @@ class Schema(BaseSchema):
         async with extensions_runner.parsing():
             try:
                 if not context.graphql_document:
-                    context.graphql_document = parse(context.query)
+                    context.graphql_document = self.executor.parse(
+                        context.query,
+                        parse_options=context.parse_options,
+                    )
 
             except GraphQLError as error:
                 context.pre_execution_errors = [error]
@@ -707,9 +735,9 @@ class Schema(BaseSchema):
                 with extensions_runner.parsing():
                     try:
                         if not execution_context.graphql_document:
-                            execution_context.graphql_document = parse(
+                            execution_context.graphql_document = self.executor.parse(
                                 execution_context.query,
-                                **execution_context.parse_options,
+                                parse_options=execution_context.parse_options,
                             )
 
                     except GraphQLError as error:
