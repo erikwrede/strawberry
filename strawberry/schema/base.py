@@ -18,6 +18,7 @@ if TYPE_CHECKING:
         ExecutionContext,
         ExecutionResult,
     )
+    from strawberry.types.execution import Executor
     from strawberry.types.base import (
         StrawberryObjectDefinition,
         WithStrawberryObjectDefinition,
@@ -37,6 +38,7 @@ class BaseSchema(Protocol):
     mutation: type[WithStrawberryObjectDefinition] | None
     subscription: type[WithStrawberryObjectDefinition] | None
     schema_directives: list[object]
+    executor: Executor
 
     @abstractmethod
     async def execute(
