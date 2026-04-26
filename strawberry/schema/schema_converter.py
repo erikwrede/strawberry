@@ -66,7 +66,7 @@ from strawberry.types.base import (
 )
 from strawberry.types.cast import get_strawberry_type_cast
 from strawberry.types.enum import StrawberryEnumDefinition, has_enum_definition
-from strawberry.types.field import UNRESOLVED
+from strawberry.types.field import UNRESOLVED, StrawberryField
 from strawberry.types.lazy_type import LazyType
 from strawberry.types.private import is_private
 from strawberry.types.scalar import ScalarWrapper, scalar
@@ -91,7 +91,6 @@ if TYPE_CHECKING:
     from strawberry.schema.config import StrawberryConfig
     from strawberry.schema_directive import StrawberrySchemaDirective
     from strawberry.types.enum import EnumValue
-    from strawberry.types.field import StrawberryField
     from strawberry.types.info import Info
     from strawberry.types.scalar import ScalarDefinition
 
@@ -692,11 +691,31 @@ class GraphQLCoreConverter:
         field.default_resolver = self.config.default_resolver
 
         if field.is_basic_field:
+            # Fast path: when ``get_result`` has not been overridden by a
+            # ``StrawberryField`` subclass, capture ``default_resolver`` and
+            # ``python_name`` once at schema-build time and call them
+            # directly. This skips the ``field.get_result`` frame and the
+            # ``base_resolver`` / ``python_name`` @property dereferences
+            # that would otherwise happen on every resolver call.
+            if type(field).get_result is StrawberryField.get_result:
+                default_resolver = self.config.default_resolver
+                python_name = field.python_name
 
-            def _get_basic_result(_source: Any, *args: str, **kwargs: Any) -> Any:
-                # Call `get_result` without an info object or any args or
-                # kwargs because this is a basic field with no resolver.
-                return field.get_result(_source, info=None, args=[], kwargs={})
+                def _get_basic_result(
+                    _source: Any, *args: str, **kwargs: Any
+                ) -> Any:
+                    return default_resolver(_source, python_name)
+
+            else:
+
+                def _get_basic_result(
+                    _source: Any, *args: str, **kwargs: Any
+                ) -> Any:
+                    # Subclass overrode ``get_result``; preserve the
+                    # original behaviour so user customisations still run.
+                    return field.get_result(
+                        _source, info=None, args=[], kwargs={}
+                    )
 
             _get_basic_result._is_default = True  # type: ignore
 
