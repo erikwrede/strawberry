@@ -228,8 +228,12 @@ class StrawberryField(dataclasses.Field):
         If the field doesn't have a resolver defined we default
         to using the default resolver specified in StrawberryConfig.
         """
-        if self.base_resolver:
-            return self.base_resolver(*args, **kwargs)
+        # Read the underscore attribute directly to avoid the property
+        # descriptor overhead on this hot path (called once per resolved
+        # field). The public `base_resolver` property is unchanged.
+        resolver = self._base_resolver
+        if resolver is not None:
+            return resolver(*args, **kwargs)
 
         return self.default_resolver(source, self.python_name)
 
@@ -255,6 +259,28 @@ class StrawberryField(dataclasses.Field):
     @arguments.setter
     def arguments(self, value: list[StrawberryArgument]) -> None:
         self._arguments = value
+        # Invalidate cached resolver layout: extensions like InputMutationExtension
+        # reassign `arguments`, which changes the union we precompute below.
+        self.__dict__.pop("resolved_arguments", None)
+
+    @cached_property
+    def resolved_arguments(self) -> list[StrawberryArgument]:
+        """Precomputed union of `field.arguments` and resolver-only arguments.
+
+        The schema converter previously rebuilt this list on every resolver
+        call. The shape is fixed once the schema is built, so we cache it
+        here and invalidate via the `arguments` setter when an extension
+        reassigns `field.arguments` (see `InputMutationExtension.apply`).
+        """
+        field_arguments = list(self.arguments)
+        if self.base_resolver:
+            existing = {arg.python_name for arg in field_arguments}
+            field_arguments.extend(
+                arg
+                for arg in self.base_resolver.arguments
+                if arg.python_name not in existing
+            )
+        return field_arguments
 
     @property
     def is_graphql_generic(self) -> bool:

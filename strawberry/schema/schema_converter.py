@@ -66,7 +66,7 @@ from strawberry.types.base import (
 )
 from strawberry.types.cast import get_strawberry_type_cast
 from strawberry.types.enum import StrawberryEnumDefinition, has_enum_definition
-from strawberry.types.field import UNRESOLVED
+from strawberry.types.field import UNRESOLVED, StrawberryField
 from strawberry.types.lazy_type import LazyType
 from strawberry.types.private import is_private
 from strawberry.types.scalar import ScalarWrapper, scalar
@@ -91,7 +91,6 @@ if TYPE_CHECKING:
     from strawberry.schema.config import StrawberryConfig
     from strawberry.schema_directive import StrawberrySchemaDirective
     from strawberry.types.enum import EnumValue
-    from strawberry.types.field import StrawberryField
     from strawberry.types.info import Info
     from strawberry.types.scalar import ScalarDefinition
 
@@ -192,20 +191,14 @@ def get_arguments(
     config: StrawberryConfig,
     scalar_registry: Mapping[object, ScalarWrapper | ScalarDefinition],
 ) -> tuple[list[Any], dict[str, Any]]:
-    # TODO: An extension might have changed the resolver arguments,
-    # but we need them here since we are calling it.
-    # This is a bit of a hack, but it's the easiest way to get the arguments
-    # This happens in mutation.InputMutationExtension
-    field_arguments = field.arguments[:]
-    if field.base_resolver:
-        existing = {arg.python_name for arg in field_arguments}
-        field_arguments.extend(
-            [
-                arg
-                for arg in field.base_resolver.arguments
-                if arg.python_name not in existing
-            ]
-        )
+    # `field.resolved_arguments` caches the union of `field.arguments` and the
+    # resolver-only arguments. The setter on `arguments` invalidates the cache
+    # so extensions that reassign the list (e.g. `InputMutationExtension`)
+    # still work as expected.
+    field_arguments = field.resolved_arguments
+    # Cache `_base_resolver` locally so the args-building block below
+    # avoids repeated `@property` descriptor lookups on the slow path.
+    base_resolver = field._base_resolver
 
     kwargs = convert_arguments(
         kwargs,
@@ -222,17 +215,17 @@ def get_arguments(
 
     args = []
 
-    if field.base_resolver:
-        if field.base_resolver.self_parameter:
+    if base_resolver is not None:
+        if base_resolver.self_parameter:
             args.append(source)
 
-        if parent_parameter := field.base_resolver.parent_parameter:
+        if parent_parameter := base_resolver.parent_parameter:
             kwargs[parent_parameter.name] = source
 
-        if root_parameter := field.base_resolver.root_parameter:
+        if root_parameter := base_resolver.root_parameter:
             kwargs[root_parameter.name] = source
 
-        if info_parameter := field.base_resolver.info_parameter:
+        if info_parameter := base_resolver.info_parameter:
             kwargs[info_parameter.name] = info
 
     return args, kwargs
@@ -692,18 +685,44 @@ class GraphQLCoreConverter:
         field.default_resolver = self.config.default_resolver
 
         if field.is_basic_field:
+            # Fast path: when ``get_result`` has not been overridden by a
+            # ``StrawberryField`` subclass, capture ``default_resolver`` and
+            # ``python_name`` once at schema-build time and call them
+            # directly. This skips the ``field.get_result`` frame and the
+            # ``base_resolver`` / ``python_name`` @property dereferences
+            # that would otherwise happen on every resolver call.
+            if type(field).get_result is StrawberryField.get_result:
+                default_resolver = self.config.default_resolver
+                python_name = field.python_name
 
-            def _get_basic_result(_source: Any, *args: str, **kwargs: Any) -> Any:
-                # Call `get_result` without an info object or any args or
-                # kwargs because this is a basic field with no resolver.
-                return field.get_result(_source, info=None, args=[], kwargs={})
+                def _get_basic_result(
+                    _source: Any, *args: str, **kwargs: Any
+                ) -> Any:
+                    return default_resolver(_source, python_name)
+
+            else:
+
+                def _get_basic_result(
+                    _source: Any, *args: str, **kwargs: Any
+                ) -> Any:
+                    # Subclass overrode ``get_result``; preserve the
+                    # original behaviour so user customisations still run.
+                    return field.get_result(
+                        _source, info=None, args=[], kwargs={}
+                    )
 
             _get_basic_result._is_default = True  # type: ignore
 
             return _get_basic_result
 
+        # Bind frequently-used attributes to local names so the per-call
+        # closures avoid attribute lookups on `self` in the hot path.
+        info_class = self.config.info_class
+        config = self.config
+        scalar_registry = self.scalar_registry
+
         def _strawberry_info_from_graphql(info: GraphQLResolveInfo) -> Info:
-            return self.config.info_class(
+            return info_class(
                 _raw_info=info,
                 _field=field,
             )
@@ -718,11 +737,42 @@ class GraphQLCoreConverter:
                 _source, info=info, args=field_args, kwargs=field_kwargs
             )
 
-        def wrap_field_extensions() -> Callable[..., Any]:
-            """Wrap the provided field resolver with the middleware."""
-            for extension in field.extensions:
-                extension.apply(field)
+        # Apply field extensions before snapshotting the resolver layout —
+        # extensions like `InputMutationExtension` reassign `field.arguments`
+        # inside `apply`, and we want our cached layout to reflect that.
+        for extension in field.extensions:
+            extension.apply(field)
 
+        # Precompute the resolver layout: which special parameters need to be
+        # filled and what name they bind to. These values are fixed once the
+        # schema is built, so we hoist them out of the per-call hot path. We
+        # snapshot the names here rather than re-reading them through the
+        # resolver descriptors on every call.
+        base_resolver = field.base_resolver
+        if base_resolver is not None:
+            wants_self = base_resolver.self_parameter is not None
+            info_param_name = (
+                base_resolver.info_parameter.name
+                if base_resolver.info_parameter is not None
+                else None
+            )
+            parent_param_name = (
+                base_resolver.parent_parameter.name
+                if base_resolver.parent_parameter is not None
+                else None
+            )
+            root_param_name = (
+                base_resolver.root_parameter.name
+                if base_resolver.root_parameter is not None
+                else None
+            )
+        else:
+            wants_self = False
+            info_param_name = None
+            parent_param_name = None
+            root_param_name = None
+
+        if field.extensions:
             extension_functions = build_field_extension_resolvers(field)
 
             def extension_resolver(
@@ -737,8 +787,8 @@ class GraphQLCoreConverter:
                     source=_source,
                     info=info,
                     kwargs=kwargs,
-                    config=self.config,
-                    scalar_registry=self.scalar_registry,
+                    config=config,
+                    scalar_registry=scalar_registry,
                 )
 
                 resolver_requested_info = False
@@ -768,9 +818,40 @@ class GraphQLCoreConverter:
                     wrapped_get_result,
                 )(_source, info, **field_kwargs)
 
-            return extension_resolver
+            _get_result_with_extensions: Callable[..., Any] = extension_resolver
+        else:
+            # Fast path: no field extensions to chain. Use the precomputed
+            # layout to call the resolver directly, skipping the construction
+            # of the `(field_args, field_kwargs)` tuple in `get_arguments` and
+            # the `reduce(partial)` chain.
+            def _direct_resolver(
+                _source: Any,
+                info: Info,
+                **kwargs: Any,
+            ) -> Any:
+                field_kwargs = convert_arguments(
+                    kwargs,
+                    field.resolved_arguments,
+                    scalar_registry=scalar_registry,
+                    config=config,
+                )
 
-        _get_result_with_extensions = wrap_field_extensions()
+                if info_param_name is not None:
+                    field_kwargs[info_param_name] = info
+                if parent_param_name is not None:
+                    field_kwargs[parent_param_name] = _source
+                if root_param_name is not None:
+                    field_kwargs[root_param_name] = _source
+
+                if wants_self:
+                    return field.get_result(
+                        _source, info=info, args=[_source], kwargs=field_kwargs
+                    )
+                return field.get_result(
+                    _source, info=info, args=[], kwargs=field_kwargs
+                )
+
+            _get_result_with_extensions = _direct_resolver
 
         def _resolver(_source: Any, info: GraphQLResolveInfo, **kwargs: Any) -> Any:
             strawberry_info = _strawberry_info_from_graphql(info)
