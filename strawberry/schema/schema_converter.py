@@ -718,6 +718,61 @@ class GraphQLCoreConverter:
                 _source, info=info, args=field_args, kwargs=field_kwargs
             )
 
+        # Fast path for fields without field extensions: when there is no
+        # extension chain to thread results through we can skip the
+        # ``extension_resolver`` reduce-loop and the ``await_maybe`` probe
+        # entirely. ``SchemaExtension.resolve`` middlewares are unaffected
+        # because graphql-core's ``MiddlewareManager`` wraps every resolver
+        # one level above this layer.
+        if not field.extensions:
+            config = self.config
+            scalar_registry = self.scalar_registry
+
+            if field.is_async:
+                # Subscriptions return ``AsyncIterator``s rather than
+                # coroutines, so we keep ``await_maybe`` here -- it
+                # passes async generators through untouched while still
+                # awaiting genuine coroutines.
+                async def _resolver_no_extensions_async(
+                    _source: Any, info: GraphQLResolveInfo, **kwargs: Any
+                ) -> Any:
+                    strawberry_info = _strawberry_info_from_graphql(info)
+                    field_args, field_kwargs = get_arguments(
+                        field=field,
+                        source=_source,
+                        info=strawberry_info,
+                        kwargs=kwargs,
+                        config=config,
+                        scalar_registry=scalar_registry,
+                    )
+                    return await await_maybe(
+                        _get_result(
+                            _source, strawberry_info, field_args, field_kwargs
+                        )
+                    )
+
+                _resolver_no_extensions_async._is_default = False  # type: ignore[attr-defined]
+                return _resolver_no_extensions_async
+
+            def _resolver_no_extensions(
+                _source: Any, info: GraphQLResolveInfo, **kwargs: Any
+            ) -> Any:
+                strawberry_info = _strawberry_info_from_graphql(info)
+                field_args, field_kwargs = get_arguments(
+                    field=field,
+                    source=_source,
+                    info=strawberry_info,
+                    kwargs=kwargs,
+                    config=config,
+                    scalar_registry=scalar_registry,
+                )
+                return _get_result(
+                    _source, strawberry_info, field_args, field_kwargs
+                )
+
+            _resolver_no_extensions._is_default = False  # type: ignore[attr-defined]
+            return _resolver_no_extensions
+
         def wrap_field_extensions() -> Callable[..., Any]:
             """Wrap the provided field resolver with the middleware."""
             for extension in field.extensions:
