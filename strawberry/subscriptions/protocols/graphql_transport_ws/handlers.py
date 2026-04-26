@@ -10,7 +10,7 @@ from typing import (
     cast,
 )
 
-from graphql import GraphQLError, GraphQLSyntaxError, parse
+from graphql import GraphQLError, GraphQLSyntaxError
 
 from strawberry.exceptions import ConnectionRejectionError
 from strawberry.http.exceptions import (
@@ -208,7 +208,18 @@ class BaseGraphQLTransportWSHandler(Generic[Context, RootValue]):
             return
 
         try:
-            graphql_document = parse(message["payload"]["query"])
+            # Route through the Schema's pluggable Executor so a custom
+            # parser (e.g. a Rust-backed implementation) sees the early
+            # parse the WS handler performs to extract the operation type.
+            # The full ExecutionContext is not yet available here, so an
+            # empty ParseOptions is passed; the operation will be parsed
+            # again through schema.execute / schema.subscribe with the
+            # request's actual parse options (or short-circuited by
+            # ParserCache if installed).
+            graphql_document = self.schema.executor.parse(
+                message["payload"]["query"],
+                parse_options={},
+            )
         except GraphQLSyntaxError as exc:
             await self.websocket.close(code=4400, reason=exc.message)
             return
