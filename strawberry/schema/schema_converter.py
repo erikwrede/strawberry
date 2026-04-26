@@ -693,8 +693,14 @@ class GraphQLCoreConverter:
 
             return _get_basic_result
 
+        # Bind frequently-used attributes to local names so the per-call
+        # closures avoid attribute lookups on `self` in the hot path.
+        info_class = self.config.info_class
+        config = self.config
+        scalar_registry = self.scalar_registry
+
         def _strawberry_info_from_graphql(info: GraphQLResolveInfo) -> Info:
-            return self.config.info_class(
+            return info_class(
                 _raw_info=info,
                 _field=field,
             )
@@ -709,11 +715,42 @@ class GraphQLCoreConverter:
                 _source, info=info, args=field_args, kwargs=field_kwargs
             )
 
-        def wrap_field_extensions() -> Callable[..., Any]:
-            """Wrap the provided field resolver with the middleware."""
-            for extension in field.extensions:
-                extension.apply(field)
+        # Apply field extensions before snapshotting the resolver layout —
+        # extensions like `InputMutationExtension` reassign `field.arguments`
+        # inside `apply`, and we want our cached layout to reflect that.
+        for extension in field.extensions:
+            extension.apply(field)
 
+        # Precompute the resolver layout: which special parameters need to be
+        # filled and what name they bind to. These values are fixed once the
+        # schema is built, so we hoist them out of the per-call hot path. We
+        # snapshot the names here rather than re-reading them through the
+        # resolver descriptors on every call.
+        base_resolver = field.base_resolver
+        if base_resolver is not None:
+            wants_self = base_resolver.self_parameter is not None
+            info_param_name = (
+                base_resolver.info_parameter.name
+                if base_resolver.info_parameter is not None
+                else None
+            )
+            parent_param_name = (
+                base_resolver.parent_parameter.name
+                if base_resolver.parent_parameter is not None
+                else None
+            )
+            root_param_name = (
+                base_resolver.root_parameter.name
+                if base_resolver.root_parameter is not None
+                else None
+            )
+        else:
+            wants_self = False
+            info_param_name = None
+            parent_param_name = None
+            root_param_name = None
+
+        if field.extensions:
             extension_functions = build_field_extension_resolvers(field)
 
             def extension_resolver(
@@ -728,8 +765,8 @@ class GraphQLCoreConverter:
                     source=_source,
                     info=info,
                     kwargs=kwargs,
-                    config=self.config,
-                    scalar_registry=self.scalar_registry,
+                    config=config,
+                    scalar_registry=scalar_registry,
                 )
 
                 resolver_requested_info = False
@@ -759,9 +796,40 @@ class GraphQLCoreConverter:
                     wrapped_get_result,
                 )(_source, info, **field_kwargs)
 
-            return extension_resolver
+            _get_result_with_extensions: Callable[..., Any] = extension_resolver
+        else:
+            # Fast path: no field extensions to chain. Use the precomputed
+            # layout to call the resolver directly, skipping the construction
+            # of the `(field_args, field_kwargs)` tuple in `get_arguments` and
+            # the `reduce(partial)` chain.
+            def _direct_resolver(
+                _source: Any,
+                info: Info,
+                **kwargs: Any,
+            ) -> Any:
+                field_kwargs = convert_arguments(
+                    kwargs,
+                    field.resolved_arguments,
+                    scalar_registry=scalar_registry,
+                    config=config,
+                )
 
-        _get_result_with_extensions = wrap_field_extensions()
+                if info_param_name is not None:
+                    field_kwargs[info_param_name] = info
+                if parent_param_name is not None:
+                    field_kwargs[parent_param_name] = _source
+                if root_param_name is not None:
+                    field_kwargs[root_param_name] = _source
+
+                if wants_self:
+                    return field.get_result(
+                        _source, info=info, args=[_source], kwargs=field_kwargs
+                    )
+                return field.get_result(
+                    _source, info=info, args=[], kwargs=field_kwargs
+                )
+
+            _get_result_with_extensions = _direct_resolver
 
         def _resolver(_source: Any, info: GraphQLResolveInfo, **kwargs: Any) -> Any:
             strawberry_info = _strawberry_info_from_graphql(info)
