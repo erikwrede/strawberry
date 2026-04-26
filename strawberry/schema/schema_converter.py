@@ -708,16 +708,6 @@ class GraphQLCoreConverter:
                 _field=field,
             )
 
-        def _get_result(
-            _source: Any,
-            info: Info,
-            field_args: list[Any],
-            field_kwargs: dict[str, Any],
-        ) -> Any:
-            return field.get_result(
-                _source, info=info, args=field_args, kwargs=field_kwargs
-            )
-
         def wrap_field_extensions() -> Callable[..., Any]:
             """Wrap the provided field resolver with the middleware."""
             for extension in field.extensions:
@@ -748,17 +738,14 @@ class GraphQLCoreConverter:
                     # explicitly to the extensions
                     field_kwargs.pop("info")
 
-                # `_get_result` expects `field_args` and `field_kwargs` as
-                # separate arguments so we have to wrap the function so that we
-                # can pass them in
+                # ``field_args`` is captured from the outer scope; the inner
+                # wrapper just forwards through the extension chain and
+                # restores ``info`` if the resolver requested it.
                 def wrapped_get_result(_source: Any, info: Info, **kwargs: Any) -> Any:
-                    # if the resolver function requested the info object info
-                    # then put it back in the kwargs dictionary
                     if resolver_requested_info:
                         kwargs["info"] = info
-
-                    return _get_result(
-                        _source, info, field_args=field_args, field_kwargs=kwargs
+                    return field.get_result(
+                        _source, info=info, args=field_args, kwargs=kwargs
                     )
 
                 # combine all the extension resolvers
