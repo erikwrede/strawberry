@@ -197,6 +197,9 @@ def get_arguments(
     # so extensions that reassign the list (e.g. `InputMutationExtension`)
     # still work as expected.
     field_arguments = field.resolved_arguments
+    # Cache `_base_resolver` locally so the args-building block below
+    # avoids repeated `@property` descriptor lookups on the slow path.
+    base_resolver = field._base_resolver
 
     kwargs = convert_arguments(
         kwargs,
@@ -213,17 +216,17 @@ def get_arguments(
 
     args = []
 
-    if field.base_resolver:
-        if field.base_resolver.self_parameter:
+    if base_resolver is not None:
+        if base_resolver.self_parameter:
             args.append(source)
 
-        if parent_parameter := field.base_resolver.parent_parameter:
+        if parent_parameter := base_resolver.parent_parameter:
             kwargs[parent_parameter.name] = source
 
-        if root_parameter := field.base_resolver.root_parameter:
+        if root_parameter := base_resolver.root_parameter:
             kwargs[root_parameter.name] = source
 
-        if info_parameter := field.base_resolver.info_parameter:
+        if info_parameter := base_resolver.info_parameter:
             kwargs[info_parameter.name] = info
 
     return args, kwargs
