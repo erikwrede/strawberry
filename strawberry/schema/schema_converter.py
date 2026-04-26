@@ -192,24 +192,14 @@ def get_arguments(
     config: StrawberryConfig,
     scalar_registry: Mapping[object, ScalarWrapper | ScalarDefinition],
 ) -> tuple[list[Any], dict[str, Any]]:
-    # TODO: An extension might have changed the resolver arguments,
-    # but we need them here since we are calling it.
-    # This is a bit of a hack, but it's the easiest way to get the arguments
-    # This happens in mutation.InputMutationExtension
-    field_arguments = field.arguments[:]
-    if field.base_resolver:
-        existing = {arg.python_name for arg in field_arguments}
-        field_arguments.extend(
-            [
-                arg
-                for arg in field.base_resolver.arguments
-                if arg.python_name not in existing
-            ]
-        )
-
+    # ``field.resolved_arguments`` returns the cached union of the
+    # GraphQL-visible arguments and the resolver-only ones. The cache is
+    # invalidated whenever ``field.arguments`` is reassigned, which is the
+    # only path through which an extension (e.g. ``InputMutationExtension``)
+    # can change the resolver shape after construction.
     kwargs = convert_arguments(
         kwargs,
-        field_arguments,
+        field.resolved_arguments,
         scalar_registry=scalar_registry,
         config=config,
     )

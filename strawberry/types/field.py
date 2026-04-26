@@ -129,6 +129,14 @@ class StrawberryField(dataclasses.Field):
         self.origin = origin
 
         self._arguments: list[StrawberryArgument] | None = None
+        # Cached union of ``self.arguments`` (GraphQL-visible args) and any
+        # resolver-only arguments (``self_parameter``, etc. live separately).
+        # The schema converter hits this on every resolve via
+        # :func:`strawberry.schema.schema_converter.get_arguments`; caching
+        # avoids the per-call list copy + extend. Invalidated whenever
+        # ``self.arguments`` is reassigned (e.g. by an extension's
+        # ``apply``).
+        self._resolved_arguments_cache: list[StrawberryArgument] | None = None
         self._base_resolver: StrawberryResolver | None = None
         if base_resolver is not None:
             self.base_resolver = base_resolver
@@ -255,6 +263,34 @@ class StrawberryField(dataclasses.Field):
     @arguments.setter
     def arguments(self, value: list[StrawberryArgument]) -> None:
         self._arguments = value
+        # Invalidate the resolved-arguments cache so a later read picks up
+        # the new GraphQL-level arguments (extensions like
+        # ``InputMutationExtension`` reassign this).
+        self._resolved_arguments_cache = None
+
+    @property
+    def resolved_arguments(self) -> list[StrawberryArgument]:
+        """Union of GraphQL-visible arguments and resolver-only arguments.
+
+        Used by the schema converter on every resolve to know which kwargs
+        from graphql-core need coercing. Cached because the union is fixed
+        once extensions have run their ``apply`` step (which may rewrite
+        ``self.arguments``); the cache is invalidated by the
+        ``arguments`` setter.
+        """
+        cached = self._resolved_arguments_cache
+        if cached is not None:
+            return cached
+        result = list(self.arguments)
+        if self.base_resolver:
+            existing = {arg.python_name for arg in result}
+            result.extend(
+                arg
+                for arg in self.base_resolver.arguments
+                if arg.python_name not in existing
+            )
+        self._resolved_arguments_cache = result
+        return result
 
     @property
     def is_graphql_generic(self) -> bool:
