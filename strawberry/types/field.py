@@ -228,8 +228,12 @@ class StrawberryField(dataclasses.Field):
         If the field doesn't have a resolver defined we default
         to using the default resolver specified in StrawberryConfig.
         """
-        if self.base_resolver:
-            return self.base_resolver(*args, **kwargs)
+        # Read the underscore attribute directly to avoid the property
+        # descriptor overhead on this hot path (called once per resolved
+        # field). The public `base_resolver` property is unchanged.
+        resolver = self._base_resolver
+        if resolver is not None:
+            return resolver(*args, **kwargs)
 
         return self.default_resolver(source, self.python_name)
 

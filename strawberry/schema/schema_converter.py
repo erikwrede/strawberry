@@ -197,12 +197,15 @@ def get_arguments(
     # This is a bit of a hack, but it's the easiest way to get the arguments
     # This happens in mutation.InputMutationExtension
     field_arguments = field.arguments[:]
-    if field.base_resolver:
+    # Cache the resolver locally to avoid repeated `@property` descriptor
+    # lookups on this hot path (one read per slow-path resolve).
+    base_resolver = field._base_resolver
+    if base_resolver is not None:
         existing = {arg.python_name for arg in field_arguments}
         field_arguments.extend(
             [
                 arg
-                for arg in field.base_resolver.arguments
+                for arg in base_resolver.arguments
                 if arg.python_name not in existing
             ]
         )
@@ -222,17 +225,17 @@ def get_arguments(
 
     args = []
 
-    if field.base_resolver:
-        if field.base_resolver.self_parameter:
+    if base_resolver is not None:
+        if base_resolver.self_parameter:
             args.append(source)
 
-        if parent_parameter := field.base_resolver.parent_parameter:
+        if parent_parameter := base_resolver.parent_parameter:
             kwargs[parent_parameter.name] = source
 
-        if root_parameter := field.base_resolver.root_parameter:
+        if root_parameter := base_resolver.root_parameter:
             kwargs[root_parameter.name] = source
 
-        if info_parameter := field.base_resolver.info_parameter:
+        if info_parameter := base_resolver.info_parameter:
             kwargs[info_parameter.name] = info
 
     return args, kwargs
